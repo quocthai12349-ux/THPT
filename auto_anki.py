@@ -3,57 +3,44 @@ import openpyxl
 from openpyxl.styles import Alignment
 import os
 import re
-from PIL import Image
 
 # === CẤU HÌNH ===
-GITHUB_REPO = "quocthai12349-ux/THPT"  # repo GitHub chứa ảnh
-folder_path = "."                       # thư mục chứa file PDF
+folder_path = "."  # Thư mục chứa file PDF
 excel_path = os.path.join(folder_path, "tracnghiem_tonghop.xlsx")
-image_dir = os.path.join(folder_path, "images")
-os.makedirs(image_dir, exist_ok=True)
-
 
 # === HÀM HỖ TRỢ ===
 def clean_title(s, fallback):
-    """Lọc và lấy tên bài từ dòng đầu PDF, nếu không có thì lấy từ tên file."""
+    """Lấy tên bài rõ ràng, tránh Untitled."""
     s = s.strip()
     s = re.sub(r"\s+", " ", s)
     match = re.search(r"(Bài|Dạng|Bổ trợ)\s*\d*[:\-–]?\s*(.*)", s, re.IGNORECASE)
     if match:
         s = match.group(0)
-    s = re.sub(r"(?i)\b(group|vật lý|physics|đề|trắc nghiệm|đúng sai)\b", "", s)
+    s = re.sub(r"(?i)\b(vật lý|physics|đề|trắc nghiệm|đúng sai)\b", "", s)
     s = s.strip(" -:").title()
     if not s or len(s) < 3:
         s = fallback.replace("(đề)", "").replace(".pdf", "").strip()
     return s
 
 
-def extract_images(page, pdf_name):
-    """Trích xuất toàn bộ ảnh từ 1 trang PDF."""
-    images = []
-    for i, img in enumerate(page.get_images(full=True)):
-        xref = img[0]
-        base_image = page.parent.extract_image(xref)
-        img_bytes = base_image["image"]
-        img_ext = base_image.get("ext", "png")
-        img_name = f"{os.path.splitext(pdf_name)[0]}_p{page.number + 1}_img{i + 1}.{img_ext}"
-        img_path = os.path.join(image_dir, img_name)
-        with open(img_path, "wb") as f:
-            f.write(img_bytes)
-        images.append(img_name)
-    return images
-
-
 def format_question(text):
-    """Chuẩn hóa câu hỏi: xuống dòng cho các đáp án a,b,c,d."""
-    text = re.sub(r"(?<=\S)-\s+(?=\S)", "", text)  # nối các từ bị ngắt
-    text = re.sub(r"\n+", " ", text)
+    """
+    Giữ nguyên biểu thức, chỉ ngắt dòng đúng chỗ:
+    - Xuống dòng trước A. B. C. D.
+    - Xuống dòng trước a) b) c) d)
+    Không ảnh hưởng đến công thức có 'a.' hoặc 'b.'.
+    """
+    # Nối từ bị ngắt dòng trong công thức
+    text = text.replace("\n", " ")
+    text = re.sub(r"(?<=\S)-\s+(?=\S)", "-", text)
 
-    # xuống dòng cho a), A), a., A. hoặc có dấu gạch ngang trước
-    text = re.sub(r"\s*([–-]?\s*[a-dA-D][\)\.])", r"\n\1", text)
+    # Xuống dòng đúng chỗ: (A. B. C. D.) hoặc (a) b) c) d))
+    text = re.sub(r"(?<![A-Za-z0-9])([A-D])\.", r"\n\1.", text)   # Trắc nghiệm A. B. C. D.
+    text = re.sub(r"(?<![A-Za-z0-9])([a-d])\)", r"\n\1)", text)   # Đúng sai a) b) c) d)
 
-    # thay các khoảng trắng dư thành 1 space
-    text = re.sub(r"[ \t]+", " ", text)
+    # Dọn khoảng trắng dư
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    text = re.sub(r"\n{2,}", "\n", text)
     return text.strip()
 
 
@@ -69,7 +56,7 @@ def process_pdfs():
         pdf_path = os.path.join(folder_path, pdf_name)
         doc = fitz.open(pdf_path)
 
-        # Lấy tên bài từ dòng đầu tiên hợp lý
+        # Lấy tiêu đề bài từ phần đầu PDF
         first_page_text = doc.load_page(0).get_text("text")
         first_line = ""
         for ln in first_page_text.splitlines():
@@ -83,24 +70,15 @@ def process_pdfs():
         for p in range(doc.page_count):
             page = doc.load_page(p)
             text = page.get_text("text")
-            parts = re.split(r"(?i)(?=Câu\s*\d+[:.)])", text)
-            imgs = extract_images(page, pdf_name)
 
+            # Tách từng câu hỏi theo Câu 1, Câu 2...
+            parts = re.split(r"(?i)(?=Câu\s*\d+[:.)])", text)
             for part in parts:
                 part = part.strip()
                 if len(part) < 10:
                     continue
                 q_text = format_question(part)
-
-                # Ảnh ở trên đầu câu hỏi
-                img_tags = ""
-                if imgs:
-                    for im in imgs:
-                        link = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/images/{im}"
-                        img_tags += f'<img src="{link}">\n'
-
-                full_text = f"{img_tags.strip()}\n{q_text}" if img_tags else q_text
-                rows.append((full_text.strip(), title))
+                rows.append((q_text.strip(), title))
     return rows
 
 
@@ -120,7 +98,6 @@ def export_excel(rows):
 
     wb.save(excel_path)
     print(f"\n✅ Đã tạo file Excel: {excel_path}")
-    print(f"🖼️ Ảnh được lưu trong thư mục: {image_dir}")
 
 
 # === MAIN ===
